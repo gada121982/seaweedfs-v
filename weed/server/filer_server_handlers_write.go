@@ -312,7 +312,7 @@ func (fs *FilerServer) detectStorageOptionV2(requestURI, qCollection, qReplicati
 			days := fs.filer.FilerConf.GetBucketLifecycleExpirationDay(bucket, object)
 			ttl := needle.TTL{
 				Count: byte(days),
-				Unit:  needle.Minute,
+				Unit:  needle.Minute, // NOTE: change to needle.Minute
 			}
 			ttlSeconds = int32(ttl.Minutes()) * 60
 		}

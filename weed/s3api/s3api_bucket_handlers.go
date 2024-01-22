@@ -318,7 +318,7 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketLifecycleConfigurationHandler %s", bucket)
 
-	//!: This function will delete bucket unexpectedly => fix this function later
+	// FIXME: This function will delete bucket unexpectedly => fix this function later
 	/*
 		if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, err)
@@ -362,7 +362,7 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("PutBucketLifecycleConfigurationHandler %s", bucket)
 
-	//!: This function will delete bucket unexpectedly => fix this function later
+	// FIXME: This function will delete bucket unexpectedly => fix this function later
 	/*
 		if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
 			s3err.WriteErrorResponse(w, r, err)
