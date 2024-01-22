@@ -78,7 +78,7 @@ func (fs *FilerServer) PostHandler(w http.ResponseWriter, r *http.Request, conte
 	}
 
 	query := r.URL.Query()
-	so, err := fs.detectStorageOption0(destination,
+	so, err := fs.detectStorageOption0V2(destination,
 		query.Get("collection"),
 		query.Get("replication"),
 		query.Get("ttl"),
@@ -273,6 +273,73 @@ func (fs *FilerServer) detectStorageOption0(requestURI, qCollection, qReplicatio
 	}
 
 	so, err := fs.detectStorageOption(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
+	if so != nil {
+		if fsync == "false" {
+			so.Fsync = false
+		} else if fsync == "true" {
+			so.Fsync = true
+		}
+		if saveInside == "true" {
+			so.SaveInside = true
+		} else {
+			so.SaveInside = false
+		}
+	}
+
+	return so, err
+}
+
+func (fs *FilerServer) detectStorageOptionV2(requestURI, qCollection, qReplication string, ttlSeconds int32, diskType, dataCenter, rack, dataNode string) (*operation.StorageOption, error) {
+
+	rule := fs.filer.FilerConf.MatchStorageRule(requestURI)
+
+	if rule.ReadOnly {
+		return nil, ErrReadOnly
+	}
+
+	if rule.MaxFileNameLength == 0 {
+		rule.MaxFileNameLength = fs.filer.MaxFilenameLength
+	}
+
+	// required by buckets folder
+	bucket := ""
+	if strings.HasPrefix(requestURI, fs.filer.DirBucketsPath+"/") {
+		fullPath := util.FullPath(requestURI)
+		bucket = fs.filer.DetectBucket(fullPath)
+		_, object := fullPath.DirAndName()
+
+		if ttlSeconds == 0 {
+			days := fs.filer.FilerConf.GetBucketLifecycleExpirationDay(bucket, object)
+			ttl := needle.TTL{
+				Count: byte(days),
+				Unit:  needle.Minute,
+			}
+			ttlSeconds = int32(ttl.Minutes()) * 60
+		}
+	}
+
+	return &operation.StorageOption{
+		Replication:       util.Nvl(qReplication, rule.Replication, fs.option.DefaultReplication),
+		Collection:        util.Nvl(qCollection, rule.Collection, bucket, fs.option.Collection),
+		DataCenter:        util.Nvl(dataCenter, rule.DataCenter, fs.option.DataCenter),
+		Rack:              util.Nvl(rack, rule.Rack, fs.option.Rack),
+		DataNode:          util.Nvl(dataNode, rule.DataNode, fs.option.DataNode),
+		TtlSeconds:        ttlSeconds,
+		DiskType:          util.Nvl(diskType, rule.DiskType),
+		Fsync:             rule.Fsync,
+		VolumeGrowthCount: rule.VolumeGrowthCount,
+		MaxFileNameLength: rule.MaxFileNameLength,
+	}, nil
+}
+
+func (fs *FilerServer) detectStorageOption0V2(requestURI, qCollection, qReplication, qTtl, diskType, fsync, dataCenter, rack, dataNode, saveInside string) (*operation.StorageOption, error) {
+
+	ttl, err := needle.ReadTTL(qTtl)
+	if err != nil {
+		glog.Errorf("fail to parse ttl %s: %v", qTtl, err)
+	}
+
+	so, err := fs.detectStorageOptionV2(requestURI, qCollection, qReplication, int32(ttl.Minutes())*60, diskType, dataCenter, rack, dataNode)
 	if so != nil {
 		if fsync == "false" {
 			so.Fsync = false

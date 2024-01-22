@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"strings"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
-	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -143,6 +145,29 @@ func (fc *FilerConf) MatchStorageRule(path string) (pathConf *filer_pb.FilerConf
 	return pathConf
 }
 
+func (fc *FilerConf) GetBucketLifecycleExpirationDay(bucket, object string) (days int32) {
+	days = 0
+	fc.rules.MatchAll([]byte(bucket), func(key []byte, value interface{}) bool {
+		t := value.(*filer_pb.FilerConf_PathConf)
+		if t.LocationPrefix == bucket {
+			if len(t.Rules) > 0 {
+				minDay := int32(0)
+				for _, rule := range t.Rules {
+					if strings.HasPrefix(object, rule.Filer.Prefix) && rule.Expiration != nil && rule.Status == filer_pb.LifecycleRuleStatus_ENABLED {
+						if rule.Expiration.Days < minDay || minDay == 0 {
+							minDay = rule.Expiration.Days
+						}
+					}
+				}
+				days = minDay
+			}
+		}
+		return true
+	})
+	return days
+}
+
+// NOTE: Deprecated, use GetRulesByBucketName instead
 func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]string) {
 	ttls = make(map[string]string)
 	fc.rules.Walk(func(key []byte, value interface{}) bool {
@@ -153,6 +178,18 @@ func (fc *FilerConf) GetCollectionTtls(collection string) (ttls map[string]strin
 		return true
 	})
 	return ttls
+}
+
+func (fc *FilerConf) GetRulesByBucketName(bucket string) []*filer_pb.Rule {
+	rules := []*filer_pb.Rule{}
+	fc.rules.MatchAll([]byte(bucket), func(key []byte, value interface{}) bool {
+		t := value.(*filer_pb.FilerConf_PathConf)
+		if t.LocationPrefix == bucket {
+			rules = t.Rules
+		}
+		return true
+	})
+	return rules
 }
 
 // merge if values in b is not empty, merge them into a
