@@ -126,6 +126,15 @@ func (v *Volume) CommitCompact() error {
 	v.DataBackend = nil
 	stats.VolumeServerVolumeCounter.WithLabelValues(v.Collection, "volume").Dec()
 
+	oldDatFile, err := os.Open(v.FileName(".dat"))
+	if err != nil {
+		return err
+	}
+	oldDatFileStat, err := oldDatFile.Stat()
+	if err != nil {
+		return err
+	}
+
 	var e error
 	if e = v.makeupDiff(v.FileName(".cpd"), v.FileName(".cpx"), v.FileName(".dat"), v.FileName(".idx")); e != nil {
 		glog.V(0).Infof("makeupDiff in CommitCompact volume %d failed %v", v.Id, e)
@@ -155,6 +164,11 @@ func (v *Volume) CommitCompact() error {
 		if e = os.Rename(v.FileName(".cpx"), v.FileName(".idx")); e != nil {
 			return fmt.Errorf("rename %s: %v", v.FileName(".cpx"), e)
 		}
+	}
+
+	// set last modification time to new .dat file
+	if err := os.Chtimes(v.FileName(".dat"), oldDatFileStat.ModTime(), oldDatFileStat.ModTime()); err != nil {
+		return err
 	}
 
 	//glog.V(3).Infof("Pretending to be vacuuming...")
@@ -435,6 +449,17 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 	if dataFile, err = os.Open(srcDatName); err != nil {
 		return err
 	}
+
+	dataFileStat, err := dataFile.Stat()
+	if err != nil {
+		return err
+	}
+	// set last modification time
+	if err := os.Chtimes(dstDatBackend.Name(), dataFileStat.ModTime(), dataFileStat.ModTime()); err != nil {
+		return err
+	}
+	glog.V(0).Infoln("copyDataBasedOnIndexFile.dataFileStat.ModTime(): ", dataFileStat.ModTime())
+
 	srcDatBackend = backend.NewDiskFile(dataFile)
 	defer srcDatBackend.Close()
 
@@ -448,7 +473,7 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
 		offset, size := value.Offset, value.Size
-
+		glog.V(0).Infoln("copyDataBasedOnIndexFile.AscendingVisit: ", offset, size)
 		if offset.IsZero() || size.IsDeleted() {
 			return nil
 		}
@@ -464,6 +489,13 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 			return fmt.Errorf("cannot hydrate needle from file: %s", err)
 		}
 
+		livedMinutes := (now - n.LastModified) / 60
+		glog.V(0).Infoln("copyDataBasedOnIndexFile.liveMinutes: ", livedMinutes)
+		if n.HasTtl() && sb.Ttl.Minutes() < uint32(livedMinutes) {
+			fmt.Println("by pass needle", livedMinutes, sb.Ttl.Minutes())
+			return nil
+		}
+
 		if n.HasTtl() && now >= n.LastModified+uint64(sb.Ttl.Minutes()*60) {
 			return nil
 		}
@@ -477,7 +509,7 @@ func (v *Volume) copyDataBasedOnIndexFile(srcDatName, srcIdxName, dstDatName, da
 		delta := n.DiskSize(version)
 		newOffset += delta
 		writeThrottler.MaybeSlowdown(delta)
-		glog.V(4).Infoln("saving key", n.Id, "volume offset", offset, "=>", newOffset, "data_size", n.Size)
+		glog.V(0).Infoln("saving key", n.Id, "volume offset", offset, "=>", newOffset, "data_size", n.Size)
 
 		return nil
 	})

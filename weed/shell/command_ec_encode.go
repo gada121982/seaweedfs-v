@@ -4,12 +4,13 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -304,7 +305,8 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
-				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
+
+				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds && !IsVolumeExpired(v) {
 					if float64(v.Size) > fullPercentage/100*float64(volumeSizeLimitMb)*1024*1024 {
 						vidMap[v.Id] = true
 					}
@@ -318,4 +320,16 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 	}
 
 	return
+}
+
+func IsVolumeExpired(v *master_pb.VolumeInformationMessage) bool {
+	ttl := needle.LoadTTLFromUint32(v.Ttl)
+	if ttl == nil {
+		return false
+	}
+	if ttl == nil || ttl.Minutes() == 0 {
+		return false
+	}
+	livedMinutes := (time.Now().Unix() - int64(v.ModifiedAtSecond)) / 60
+	return int64(ttl.Minutes()) < livedMinutes
 }

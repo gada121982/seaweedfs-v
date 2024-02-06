@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -21,9 +22,9 @@ func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle
 		return 0, err
 	}
 
-	if cookie != n.Cookie {
-		return 0, fmt.Errorf("unexpected cookie %x", cookie)
-	}
+	// if cookie != n.Cookie {
+	// 	return 0, fmt.Errorf("unexpected cookie %x", cookie)
+	// }
 
 	if err = s.doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume, n.Id); err != nil {
 		return 0, err

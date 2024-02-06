@@ -42,7 +42,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	}()
 
 	hasVolumeInfoFile := v.maybeLoadVolumeInfo()
-
+	fmt.Println("load.v.HasRemoteFile", v.HasRemoteFile())
 	if v.HasRemoteFile() {
 		v.noWriteCanDelete = true
 		v.noWriteOrDelete = false
@@ -50,6 +50,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		v.LoadRemoteFile()
 		alreadyHasSuperBlock = true
 	} else if exists, canRead, canWrite, modifiedTime, fileSize := util.CheckFile(v.FileName(".dat")); exists {
+		fmt.Println("load.v.filesize", fileSize, canRead, canWrite, modifiedTime, super_block.SuperBlockSize)
 		// open dat file
 		if !canRead {
 			return fmt.Errorf("cannot read Volume Data file %s", v.FileName(".dat"))

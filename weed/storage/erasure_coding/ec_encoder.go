@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/klauspost/reedsolomon"
 
@@ -79,7 +80,7 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 	}
 
 	glog.V(0).Infof("encodeDatFile %s.dat size:%d", baseFileName, fi.Size())
-	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize)
+	err = encodeDatFile(fi.Size(), baseFileName, bufferSize, largeBlockSize, file, smallBlockSize, fi.ModTime())
 	if err != nil {
 		return fmt.Errorf("encodeDatFile: %v", err)
 	}
@@ -195,7 +196,7 @@ func encodeDataOneBatch(file *os.File, enc reedsolomon.Encoder, startOffset, blo
 	return nil
 }
 
-func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64) error {
+func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, largeBlockSize int64, file *os.File, smallBlockSize int64, lastModified time.Time) error {
 
 	var processedSize int64
 
@@ -213,6 +214,11 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 	defer closeEcFiles(outputs)
 	if err != nil {
 		return fmt.Errorf("failed to open ec files %s: %v", baseFileName, err)
+	}
+
+	// set last modified time ec0
+	if err := os.Chtimes(outputs[0].Name(), lastModified, lastModified); err != nil {
+		return fmt.Errorf("failed to set last modified %s: %v", baseFileName, err)
 	}
 
 	for remainingSize > largeBlockSize*DataShardsCount {
