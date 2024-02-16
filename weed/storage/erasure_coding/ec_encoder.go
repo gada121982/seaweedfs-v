@@ -216,11 +216,6 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 		return fmt.Errorf("failed to open ec files %s: %v", baseFileName, err)
 	}
 
-	// set last modified time ec0
-	if err := os.Chtimes(outputs[0].Name(), lastModified, lastModified); err != nil {
-		return fmt.Errorf("failed to set last modified %s: %v", baseFileName, err)
-	}
-
 	for remainingSize > largeBlockSize*DataShardsCount {
 		err = encodeData(file, enc, processedSize, largeBlockSize, buffers, outputs)
 		if err != nil {
@@ -237,6 +232,12 @@ func encodeDatFile(remainingSize int64, baseFileName string, bufferSize int, lar
 		remainingSize -= smallBlockSize * DataShardsCount
 		processedSize += smallBlockSize * DataShardsCount
 	}
+
+	// set last modified time to ec00 file
+	if err := os.Chtimes(outputs[0].Name(), lastModified, lastModified); err != nil {
+		return fmt.Errorf("failed to set last modified %s: %v", baseFileName, err)
+	}
+
 	return nil
 }
 
