@@ -1,20 +1,21 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"math"
 	"net/http"
 	"time"
 
+	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 
@@ -317,34 +318,38 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 	bucket, _ := s3_constants.GetBucketAndObject(r)
 	glog.V(3).Infof("GetBucketLifecycleConfigurationHandler %s", bucket)
 
-	if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
-		s3err.WriteErrorResponse(w, r, err)
-		return
-	}
-	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
+	// FIXME: This function will delete bucket unexpectedly => fix this function later
+	/*
+		if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, err)
+			return
+		}
+	*/
+	fc, err := filer.ReadFilerConf(
+		s3a.option.Filer,
+		s3a.option.GrpcDialOption,
+		nil)
 	if err != nil {
 		glog.Errorf("GetBucketLifecycleConfigurationHandler: %s", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
-	ttls := fc.GetCollectionTtls(s3a.getCollectionName(bucket))
-	if len(ttls) == 0 {
-		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchLifecycleConfiguration)
-		return
-	}
+
 	response := Lifecycle{}
-	for prefix, internalTtl := range ttls {
-		ttl, _ := needle.ReadTTL(internalTtl)
-		days := int(ttl.Minutes() / 60 / 24)
-		if days == 0 {
-			continue
-		}
+	rules := fc.GetRulesByBucketName(bucket)
+
+	for _, rule := range rules {
 		response.Rules = append(response.Rules, Rule{
-			Status: Enabled, Filter: Filter{
-				Prefix: Prefix{string: prefix, set: true},
+			ID:     rule.Id,
+			Status: FilerS3StatusMap[rule.Status],
+			Filter: Filter{
+				Prefix: rule.Filer.Prefix,
 				set:    true,
 			},
-			Expiration: Expiration{Days: days, set: true},
+			Expiration: Expiration{
+				Days: rule.Expiration.Days,
+				set:  true,
+			},
 		})
 	}
 	writeSuccessResponseXML(w, r, response)
@@ -354,16 +359,95 @@ func (s3a *S3ApiServer) GetBucketLifecycleConfigurationHandler(w http.ResponseWr
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutBucketLifecycleConfiguration.html
 func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWriter, r *http.Request) {
 
-	s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("PutBucketLifecycleConfigurationHandler %s", bucket)
 
+	// FIXME: This function will delete bucket unexpectedly => fix this function later
+	/*
+		if err := s3a.checkBucket(r, bucket); err != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, err)
+			return
+		}
+	*/
+	if r.Body == nil || r.Body == http.NoBody {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+
+	configuration := Lifecycle{}
+	if err := xmlDecoder(r.Body, &configuration, r.ContentLength); err != nil {
+		glog.Errorf("PutBucketLifecycleConfigurationHandler: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+		return
+	}
+	if len(configuration.Rules) == 0 {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
+	}
+
+	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
+	if err != nil {
+		glog.Errorf("PutBucketLifecycleConfigurationHandler: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	rules := []*filer_pb.Rule{}
+	for _, rule := range configuration.Rules {
+		rules = append(rules, &filer_pb.Rule{
+			Id: rule.ID,
+			Filer: &filer_pb.Filer{
+				Prefix: rule.Filter.Prefix,
+			},
+			Expiration: &filer_pb.Expiration{
+				Days: rule.Expiration.Days,
+			},
+			Status: rule.Status.ToFilerRuleStatus(),
+		})
+	}
+	filerConf := &filer_pb.FilerConf_PathConf{
+		LocationPrefix: bucket,
+		Rules:          rules,
+	}
+
+	fc.AddLocationConf(filerConf)
+	var buf bytes.Buffer
+	fc.ToText(&buf)
+
+	if err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+	}); err != nil && err != filer_pb.ErrNotFound {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	writeSuccessResponseXML(w, r, s3.PutBucketLifecycleConfigurationOutput{})
 }
 
 // DeleteBucketMetricsConfiguration Delete Bucket Lifecycle
 // https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteBucketLifecycle.html
 func (s3a *S3ApiServer) DeleteBucketLifecycleHandler(w http.ResponseWriter, r *http.Request) {
+	bucket, _ := s3_constants.GetBucketAndObject(r)
+	glog.V(3).Infof("DeleteBucketLifecycleHandler %s", bucket)
 
-	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
+	fc, err := filer.ReadFilerConf(s3a.option.Filer, s3a.option.GrpcDialOption, nil)
+	if err != nil {
+		glog.Errorf("DeleteBucketLifecycleHandler: %s", err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+	fc.DeleteLocationConf(bucket)
+	var buf bytes.Buffer
 
+	fc.ToText(&buf)
+
+	if err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer.SaveInsideFiler(client, filer.DirectoryEtcSeaweedFS, filer.FilerConfName, buf.Bytes())
+	}); err != nil && err != filer_pb.ErrNotFound {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	writeSuccessResponseXML(w, r, s3.DeleteBucketLifecycleOutput{})
 }
 
 // GetBucketLocationHandler Get bucket location

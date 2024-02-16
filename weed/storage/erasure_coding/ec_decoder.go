@@ -176,6 +176,15 @@ func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []strin
 		}
 	}
 
+	// ec volume is empty => copy superblock to dat file
+	if datFileSize == 0 {
+		w, err := io.CopyN(datFile, inputFiles[0], super_block.SuperBlockSize)
+		if w != super_block.SuperBlockSize {
+			return fmt.Errorf("copy %s super block: %v", baseFileName, err)
+		}
+		return nil
+	}
+
 	for datFileSize >= DataShardsCount*ErasureCodingLargeBlockSize {
 		for shardId := 0; shardId < DataShardsCount; shardId++ {
 			w, err := io.CopyN(datFile, inputFiles[shardId], ErasureCodingLargeBlockSize)
@@ -194,6 +203,17 @@ func WriteDatFile(baseFileName string, datFileSize int64, shardFileNames []strin
 				return fmt.Errorf("copy %s small block %d: %v", baseFileName, shardId, err)
 			}
 			datFileSize -= toRead
+		}
+	}
+
+	// set last modification time
+	ecStat, err := inputFiles[0].Stat()
+	if err != nil {
+		return fmt.Errorf("failed to get ec file stat %s: %v", baseFileName, err)
+	}
+	if inputFiles[0] != nil {
+		if err := os.Chtimes(datFile.Name(), ecStat.ModTime(), ecStat.ModTime()); err != nil {
+			return fmt.Errorf("failed to set last modified %s: %v", baseFileName, err)
 		}
 	}
 

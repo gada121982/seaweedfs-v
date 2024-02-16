@@ -3,6 +3,8 @@ package s3api
 import (
 	"encoding/xml"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 // Status represents lifecycle configuration status
@@ -13,6 +15,18 @@ const (
 	Enabled  ruleStatus = "Enabled"
 	Disabled ruleStatus = "Disabled"
 )
+
+func (ruleStatus ruleStatus) ToFilerRuleStatus() filer_pb.LifecycleRuleStatus {
+	if ruleStatus == Enabled {
+		return filer_pb.LifecycleRuleStatus_ENABLED
+	}
+	return filer_pb.LifecycleRuleStatus_DISABLED
+}
+
+var FilerS3StatusMap = map[filer_pb.LifecycleRuleStatus]ruleStatus{
+	filer_pb.LifecycleRuleStatus_ENABLED:  Enabled,
+	filer_pb.LifecycleRuleStatus_DISABLED: Disabled,
+}
 
 // Lifecycle - Configuration for bucket lifecycle.
 type Lifecycle struct {
@@ -36,7 +50,7 @@ type Filter struct {
 	XMLName xml.Name `xml:"Filter"`
 	set     bool
 
-	Prefix Prefix
+	Prefix string `xml:"Prefix"`
 
 	And    And
 	andSet bool
@@ -80,7 +94,7 @@ type And struct {
 // Expiration - expiration actions for a rule in lifecycle configuration.
 type Expiration struct {
 	XMLName      xml.Name           `xml:"Expiration"`
-	Days         int                `xml:"Days,omitempty"`
+	Days         int32              `xml:"Days,omitempty"`
 	Date         ExpirationDate     `xml:"Date,omitempty"`
 	DeleteMarker ExpireDeleteMarker `xml:"ExpiredObjectDeleteMarker"`
 
